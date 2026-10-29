@@ -69,3 +69,69 @@ func TestCreateRemoteEphemeralConfigKeysReachBackend(t *testing.T) {
 	assert.Equal(t, "", config.GetValue("eph", "config_template_file"))
 	assert.Equal(t, "", config.GetValue("eph", "config_template"))
 }
+
+// TestUpdateRemoteTokenNotRefreshed checks that a token passed to
+// UpdateRemote is kept rather than replaced by the OAuth flow.
+func TestUpdateRemoteTokenNotRefreshed(t *testing.T) {
+	defer testConfigFile(t, simpleOptions, "token.conf")()
+	ctx := context.Background()
+
+	var gotRefresh string
+	backendName := "config_token_test_remote"
+	if regInfo, _ := fs.Find(backendName); regInfo == nil {
+		fs.Register(&fs.RegInfo{
+			Name: backendName,
+			Config: func(_ context.Context, _ string, _ configmap.Mapper, in fs.ConfigIn) (*fs.ConfigOut, error) {
+				switch in.State {
+				case "":
+					return fs.ConfigConfirm("refresh", true, config.ConfigRefreshToken, "Token already configured - replace it?")
+				case "refresh":
+					gotRefresh = in.Result
+				}
+				return nil, nil
+			},
+		})
+	}
+
+	_, err := config.CreateRemote(ctx, "tok", backendName, rc.Params{}, config.UpdateRemoteOpt{NonInteractive: true})
+	require.NoError(t, err)
+
+	for _, test := range []struct {
+		name       string
+		keyValues  rc.Params
+		wantAsked  bool
+		wantResult string
+	}{
+		{
+			name:       "TokenGivenKeepsToken",
+			keyValues:  rc.Params{"token": `{"access_token":"a"}`},
+			wantResult: "false",
+		},
+		{
+			name:       "TokenGivenExplicitRefresh",
+			keyValues:  rc.Params{"token": `{"access_token":"b"}`, config.ConfigRefreshToken: "true"},
+			wantResult: "true",
+		},
+		{
+			name:      "NoTokenAsks",
+			keyValues: rc.Params{"test_key": "x"},
+			wantAsked: true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gotRefresh = ""
+			out, err := config.UpdateRemote(ctx, "tok", test.keyValues, config.UpdateRemoteOpt{NonInteractive: true})
+			require.NoError(t, err)
+			if test.wantAsked {
+				require.NotNil(t, out)
+				require.NotNil(t, out.Option)
+				assert.Equal(t, config.ConfigRefreshToken, out.Option.Name)
+				return
+			}
+			assert.Nil(t, out)
+			assert.Equal(t, test.wantResult, gotRefresh)
+			assert.Equal(t, test.keyValues["token"], config.GetValue("tok", "token"))
+			assert.Equal(t, "", config.GetValue("tok", config.ConfigRefreshToken))
+		})
+	}
+}

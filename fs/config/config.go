@@ -36,6 +36,10 @@ const (
 	// ConfigToken is the key used to store the token under
 	ConfigToken = "token"
 
+	// ConfigRefreshToken is the config parameter which answers the
+	// OAuth question of whether to replace an existing token
+	ConfigRefreshToken = "config_refresh_token"
+
 	// ConfigClientID is the config key used to store the client id
 	ConfigClientID = "client_id"
 
@@ -598,6 +602,13 @@ func updateRemote(ctx context.Context, name string, keyValues rc.Params, opt Upd
 	// Add a getter to make sure ephemeral config is still visible
 	if len(ephemeral) > 0 {
 		m.AddGetter(ephemeral, configmap.PriorityNormal)
+	}
+	// A token passed in is the one wanted, so don't offer to replace
+	// it with a fresh one from the OAuth flow
+	if _, ok := choices[fs.ConfigToken]; ok {
+		if _, ok := choices[ConfigRefreshToken]; !ok {
+			choices.Set(ConfigRefreshToken, "false")
+		}
 	}
 	if opt.Edit {
 		choices[fs.ConfigEdit] = "true"
